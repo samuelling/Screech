@@ -1,0 +1,23 @@
+[
+ {
+  "file": "note-sturdy.wav",
+  "mode": "sturdy",
+  "text": "Meet at the hammocks at 4.",
+  "passphrase": "tangerine owl 0",
+  "flags": 1
+ },
+ {
+  "file": "note-quick.wav",
+  "mode": "quick",
+  "text": "Café ☕ — ünïcode & emoji 🐢 survive",
+  "passphrase": "",
+  "flags": 0
+ },
+ {
+  "file": "note-classic.wav",
+  "mode": "classic",
+  "text": "The shed key is in the blue jar. The shed key is in the blue jar. Repeat: the blue jar.",
+  "passphrase": "tangerine owl 2",
+  "flags": 3
+ }
+]
