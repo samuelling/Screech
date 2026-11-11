@@ -37,3 +37,10 @@ tools/             screech-cli (encode/decode WAVs) and the Swift ↔ web compat
 - **Compatibility:** `swift build -c release --product screech-cli && node tools/web-decode.mjs --self-test`.
 
 The web protocol files are copies of `apps/oldschool/modem/notes-core.js`, `notes-crypto.js` and `notes-photo.js` from RetroSynths. Keep them identical; the Swift tests' fixtures come from them.
+
+## TestFlight
+
+`.github/workflows/testflight.yml` archives the app and uploads it to App Store Connect. Run it from
+Actions → TestFlight → Run workflow, or push a tag like `v1.0.1`. It needs three repository secrets:
+`ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_P8` (the text of an App Store Connect API key with the Admin role),
+and an app record for `com.samuelling.screech` in App Store Connect.

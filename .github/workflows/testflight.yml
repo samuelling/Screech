@@ -1,0 +1,111 @@
+name: TestFlight
+
+# Archives Screech and uploads it to App Store Connect, where it appears in TestFlight.
+# Runs by hand (Actions → TestFlight → Run workflow), or on any tag like v1.0.1.
+#
+# One-time setup (repo Settings → Secrets and variables → Actions → New repository secret):
+#   ASC_KEY_ID      the App Store Connect API key's Key ID
+#   ASC_ISSUER_ID   the Issuer ID shown above the keys list
+#   ASC_KEY_P8      the full text of the downloaded AuthKey_XXXX.p8 file
+# The key needs the Admin role so Xcode can create the distribution certificate and profile itself.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency: testflight
+
+jobs:
+  upload:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          IID: ${{ secrets.ASC_ISSUER_ID }}
+          P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=""
+          [ -n "$KID" ] || missing="$missing ASC_KEY_ID"
+          [ -n "$IID" ] || missing="$missing ASC_ISSUER_ID"
+          [ -n "$P8" ]  || missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then echo "::error::Missing repository secrets:$missing"; exit 1; fi
+
+      - name: Pick Xcode
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Write API key
+        env:
+          P8: ${{ secrets.ASC_KEY_P8 }}
+          KID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s\n' "$P8" > "$RUNNER_TEMP/asc/AuthKey_$KID.p8"
+          echo "ASC_KEY_PATH=$RUNNER_TEMP/asc/AuthKey_$KID.p8" >> "$GITHUB_ENV"
+
+      - name: Archive
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          IID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          # Every upload needs a new build number; the workflow run number always goes up.
+          BUILD=$(( 100 + GITHUB_RUN_NUMBER ))
+          echo "Build number $BUILD"
+          xcodebuild archive \
+            -project Screech.xcodeproj -scheme Screech -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Screech.xcarchive" \
+            CURRENT_PROJECT_VERSION=$BUILD \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$KID" \
+            -authenticationKeyIssuerID "$IID" 2>&1 | tee archive.log | grep -E "error:|warning: .*sign|ARCHIVE" || true
+          grep -q "ARCHIVE SUCCEEDED" archive.log
+
+      - name: Upload to App Store Connect
+        env:
+          KID: ${{ secrets.ASC_KEY_ID }}
+          IID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set -o pipefail
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>Y4HDFDP479</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Screech.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$KID" \
+            -authenticationKeyIssuerID "$IID" 2>&1 | tee export.log | tail -30
+          grep -qE "EXPORT SUCCEEDED|Upload succeeded" export.log
+          echo "::notice::Uploaded. It shows up in App Store Connect → TestFlight after Apple finishes processing (usually 5–30 minutes)."
+
+      - name: Save logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-logs
+          path: |
+            archive.log
+            export.log
+          if-no-files-found: ignore
+
+      - name: Remove key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/asc"
