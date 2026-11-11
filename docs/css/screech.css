@@ -1,6 +1,6 @@
 /* Screech (web): a green-phosphor modem terminal. */
 :root {
-  --green: #40ff73; --dim: #1f8c40; --faint: #0d3819; --amber: #ffb833; --red: #ff4d40; --bg: #030a05;
+  --green: #40ff73; --dim: #2fa552; --faint: #0d3819; --amber: #ffb833; --red: #ff4d40; --bg: #030a05;
   --glow: 0 0 6px rgba(64, 255, 115, .55);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
@@ -52,7 +52,8 @@ input::placeholder, textarea::placeholder { color: var(--dim); }
 .dimbtn { border-color: var(--dim); color: var(--dim); }
 :focus-visible { outline: 2px dotted var(--green); outline-offset: 3px; }
 
-main { flex: 1; padding: 0 16px 24px; }
+main { flex: 1; }
+main > section[role=tabpanel] { padding: 0 16px 24px; }
 section[role=tabpanel] > * + * { margin-top: 14px; }
 .rule { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; color: var(--dim); }
 .rule::after { content: ""; flex: 1; height: 1px; background: var(--faint); }

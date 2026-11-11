@@ -2,7 +2,7 @@ import SwiftUI
 
 enum Phosphor {
     static let green = Color(red: 0.25, green: 1.0, blue: 0.45)
-    static let dim = Color(red: 0.12, green: 0.55, blue: 0.25)
+    static let dim = Color(red: 0.16, green: 0.64, blue: 0.31)
     static let faint = Color(red: 0.05, green: 0.22, blue: 0.10)
     static let amber = Color(red: 1.0, green: 0.72, blue: 0.2)
     static let red = Color(red: 1.0, green: 0.3, blue: 0.25)

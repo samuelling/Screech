@@ -27,7 +27,8 @@
     <button type="button" class="qbtn" id="helpBtn" aria-label="Help" aria-haspopup="dialog">?</button>
   </header>
 
-  <section class="key">
+  <main>
+  <section class="key" aria-label="Passphrase">
     <div class="keyrow">
       <label for="pass" class="prompt">KEY&gt;</label>
       <input id="pass" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="shared passphrase" aria-describedby="passHelp">
@@ -42,7 +43,6 @@
     <button type="button" role="tab" id="tabListen" aria-selected="false" aria-controls="panelListen" tabindex="-1">LISTEN</button>
   </div>
 
-  <main>
     <section id="panelSend" role="tabpanel" aria-labelledby="tabSend">
       <h2 class="rule">MESSAGE</h2>
       <label for="msg" class="sr-only">Message</label>
@@ -93,7 +93,7 @@
     </section>
   </main>
 
-  <footer class="status" role="status" aria-live="polite"><span>&gt; <span id="status">READY.</span></span><span class="cursor" aria-hidden="true">▌</span></footer>
+  <div class="status" role="status" aria-live="polite"><span>&gt; <span id="status">READY.</span></span><span class="cursor" aria-hidden="true">▌</span></div>
 </div>
 
 <dialog id="help" aria-labelledby="helpTitle">
