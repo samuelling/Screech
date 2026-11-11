@@ -44,11 +44,38 @@
   </div>
 
     <section id="panelSend" role="tabpanel" aria-labelledby="tabSend">
+      <div class="kinds" role="group" aria-label="What to send">
+        <button type="button" class="kindbtn" id="kindNote" aria-pressed="true">NOTE</button>
+        <button type="button" class="kindbtn" id="kindPhoto" aria-pressed="false">PHOTO</button>
+      </div>
+      <div id="noteBox">
       <h2 class="rule">MESSAGE</h2>
       <label for="msg" class="sr-only">Message</label>
       <textarea id="msg" maxlength="280" rows="5" placeholder="type a note…"></textarea>
       <p class="dim small" id="counter" aria-live="polite">0/280 CHARS · ~0.0 S ON AIR</p>
       <p class="warn small" id="openWarn">NO PASSPHRASE: THIS WILL BE AN OPEN NOTE. ANYONE WITH A DECODER CAN READ IT.</p>
+      </div>
+
+      <div id="photoBox" hidden>
+        <h2 class="rule">PHOTO</h2>
+        <button type="button" class="tbtn solid" id="pickPhoto">CHOOSE A PHOTO</button>
+        <input type="file" id="photoFile" accept="image/*" hidden>
+        <div class="pframe" id="sendFrame" hidden><canvas id="sendCanvas" role="img" aria-label="Preview of the photo as it will arrive"></canvas></div>
+        <p class="dim small" id="photoInfo">Photos travel tiny (64–128 pixels) and slowly: about half a minute to a few minutes. They paint in from the top while they arrive, like the old days.</p>
+        <div id="photoOpts" hidden>
+          <div class="segrow" role="radiogroup" aria-label="Size"><span class="dim small seglbl" aria-hidden="true">SIZE</span>
+            <label class="seg"><input type="radio" name="psize" value="tiny"><span>TINY</span></label>
+            <label class="seg"><input type="radio" name="psize" value="small" checked><span>SMALL</span></label>
+            <label class="seg"><input type="radio" name="psize" value="large"><span>LARGE</span></label>
+          </div>
+          <div class="segrow" role="radiogroup" aria-label="Detail"><span class="dim small seglbl" aria-hidden="true">DETAIL</span>
+            <label class="seg"><input type="radio" name="pqual" value="low"><span>LOW</span></label>
+            <label class="seg"><input type="radio" name="pqual" value="medium" checked><span>MEDIUM</span></label>
+            <label class="seg"><input type="radio" name="pqual" value="high"><span>HIGH</span></label>
+          </div>
+        </div>
+        <p class="warn small" id="photoWarn" hidden>NO PASSPHRASE: ANYONE WITH A DECODER CAN SEE THIS PHOTO.</p>
+      </div>
 
       <h2 class="rule" id="speedLbl">SPEED</h2>
       <div class="speeds" role="radiogroup" aria-labelledby="speedLbl">
@@ -83,6 +110,7 @@
       </div>
 
       <h2 class="rule">RECEIVED</h2>
+      <ol id="photos" class="notes" aria-live="polite"></ol>
       <p class="dim small" id="emptyMsg">NOTHING YET. NOTES YOU HEAR APPEAR HERE (THEY'RE NOT SAVED WHEN YOU LEAVE THE PAGE).</p>
       <ol id="notes" class="notes" aria-live="polite"></ol>
       <div class="btnrow">
@@ -109,6 +137,8 @@
     <p>STURDY: slow chiming tones, the most reliable. QUICK: half the time, wants a quieter room. CLASSIC: the real 300-baud modem screech. The receiver hears all three automatically.</p>
     <h3>IS IT REALLY SECRET?</h3>
     <p>Yes, with a passphrase. The note is encrypted with AES-256 before it becomes sound, using a key made from your passphrase (PBKDF2, 200,000 rounds). Anyone can record the screech, but without the passphrase it's noise, and a tampered note won't open. Without a passphrase it's an OPEN NOTE that anyone with a decoder can read. Pick a passphrase that's hard to guess; a few unrelated words work well.</p>
+    <h3>PHOTOS</h3>
+    <p>SEND › PHOTO, choose a picture, pick a size and detail. Photos travel tiny (64–128 pixels) and take from about half a minute to a few minutes. On the other side the picture paints in from the top, one 16-pixel stripe at a time, like a download on an old modem. A garbled stripe shows as a smear and the rest keeps coming. With a passphrase, every stripe is encrypted.</p>
     <h3>NOTES AS SOUND FILES</h3>
     <p>SAVE AS SOUND makes an audio file of the note that you can text or email. The other person opens it with DECODE A SOUND FILE (or in Screech on iPhone). Notes survive most voice-memo compression.</p>
     <h3>IF A NOTE DOESN'T ARRIVE</h3>

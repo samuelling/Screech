@@ -2,6 +2,7 @@
 // notes-core.js (modem) and notes-crypto.js (AES-256-GCM + PBKDF2) are shared, byte for byte.
 import { MODES, NoteDecoder, synthesize, frameSeconds, decodeBuffer, INTRO_SECONDS, FLAG } from './notes-core.js';
 import { packNote, unpackNote, estimateBytes } from './notes-crypto.js';
+import { SIZES, QUALITY, fitSize, encodeImage, decodeBand, packPhoto, photoSeconds, synthesizePhoto, PhotoReceiver } from './notes-photo.js';
 
 const $ = (id) => document.getElementById(id);
 const MAX = 280;
@@ -29,7 +30,8 @@ function audio() {
 const pass = $('pass'), remember = $('remember');
 try { const p = localStorage.getItem('screech.pass'); if (p != null) { pass.value = p; remember.checked = true; } } catch {}
 const savePass = () => { try { if (remember.checked) localStorage.setItem('screech.pass', pass.value); else localStorage.removeItem('screech.pass'); } catch {} };
-pass.addEventListener('input', () => { savePass(); updateSend(); });
+pass.addEventListener('input', () => { savePass(); updateSend(); clearTimeout(retryT); retryT = setTimeout(() => photoRx.retry(), 400); });
+let retryT = 0;
 remember.addEventListener('change', savePass);
 $('reveal').onclick = () => { const show = pass.type === 'password'; pass.type = show ? 'text' : 'password'; $('reveal').textContent = show ? 'HIDE' : 'SHOW'; $('reveal').setAttribute('aria-label', show ? 'Hide passphrase' : 'Show passphrase'); };
 $('reveal').setAttribute('aria-label', 'Show passphrase');
@@ -45,11 +47,76 @@ tabs.forEach((t, i) => {
   t.onkeydown = (e) => { if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); selectTab(1 - i, true); } };
 });
 
+// ---------------------------------------------------------------- what to send: a note or a photo
+let kind = 'note';
+function setKind(k) {
+  if (sending) return;
+  kind = k;
+  $('kindNote').setAttribute('aria-pressed', String(k === 'note')); $('kindPhoto').setAttribute('aria-pressed', String(k === 'photo'));
+  $('noteBox').hidden = k !== 'note'; $('photoBox').hidden = k !== 'photo';
+  updateSend();
+}
+$('kindNote').onclick = () => setKind('note'); $('kindPhoto').onclick = () => setKind('photo');
+
+// ---------------------------------------------------------------- photo to send
+let photoSrc = null, outgoing = null;
+$('pickPhoto').onclick = () => $('photoFile').click();
+$('photoFile').onchange = async () => {
+  const f = $('photoFile').files[0]; $('photoFile').value = ''; if (!f) return;
+  try { photoSrc = await createImageBitmap(f, { imageOrientation: 'from-image' }); }
+  catch { try { const im = new Image(); im.src = URL.createObjectURL(f); await im.decode(); photoSrc = im; } catch { setStatus('COULDN\'T OPEN THAT PICTURE.'); return; } }
+  $('pickPhoto').textContent = 'CHOOSE ANOTHER'; $('pickPhoto').classList.remove('solid');
+  prepPhoto();
+};
+document.querySelectorAll('input[name=psize], input[name=pqual]').forEach(r => r.addEventListener('change', prepPhoto));
+function prepPhoto() {
+  if (!photoSrc) return;
+  const size = document.querySelector('input[name=psize]:checked').value, q = QUALITY[document.querySelector('input[name=pqual]:checked').value];
+  const { w, h } = fitSize(photoSrc.width, photoSrc.height, SIZES[size]);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(photoSrc, 0, 0, w, h);
+  const rgba = g.getImageData(0, 0, w, h).data;
+  const enc = encodeImage(rgba, w, h, { quality: q });
+  const prev = new Uint8ClampedArray(w * h * 4); enc.bands.forEach((b, i) => decodeBand(b, i, enc, prev));
+  outgoing = { enc, prev };
+  drawSendPreview(null);
+  $('sendFrame').hidden = false; $('photoOpts').hidden = false;
+  updateSend();
+}
+function drawSendPreview(rows) {
+  if (!outgoing) return;
+  const { enc, prev } = outgoing, cv = $('sendCanvas');
+  drawPixels(cv, prev, enc.w, enc.h, rows, null);
+}
+/** draw w×h pixels big and crisp; rows = how many rows to show (null = all); scan = row of a loading line */
+function drawPixels(cv, rgba, w, h, rows, scan) {
+  const S = Math.max(1, Math.floor(Math.min(480 / w, 300 / h)));
+  if (cv.width !== w * S || cv.height !== h * S) { cv.width = w * S; cv.height = h * S; }
+  const g = cv.getContext('2d'); g.imageSmoothingEnabled = false;
+  g.fillStyle = '#0f0f0f'; g.fillRect(0, 0, cv.width, cv.height);
+  const t = document.createElement('canvas'); t.width = w; t.height = h; t.getContext('2d').putImageData(new ImageData(Uint8ClampedArray.from(rgba), w, h), 0, 0);
+  const R = rows == null ? h : Math.max(0, Math.min(h, rows));
+  if (R > 0) g.drawImage(t, 0, 0, w, R, 0, 0, w * S, R * S);
+  const line = rows != null && rows < h ? rows : scan;
+  if (line != null && line < h) { g.fillStyle = '#40ff73'; g.shadowColor = '#40ff73'; g.shadowBlur = 6; g.fillRect(0, Math.min(cv.height - 2, line * S), cv.width, 2); g.shadowBlur = 0; }
+}
+
 // ---------------------------------------------------------------- send
 const msg = $('msg');
 const mode = () => document.querySelector('input[name=speed]:checked').value;
 function updateSend() {
-  const n = [...msg.value].length, secret = pass.value.length > 0;
+  const secret = pass.value.length > 0;
+  if (kind === 'photo') {
+    $('photoWarn').hidden = secret || !outgoing;
+    if (outgoing) {
+      const m = mode(), est = 2 * (frameSeconds(11 + (secret ? 24 : 0), m) + 0.15) + outgoing.enc.bands.reduce((t, b) => t + frameSeconds(4 + b.length + (secret ? 16 : 0), m) + 0.15, 0) + ($('intro').checked ? INTRO_SECONDS : 0);
+      $('photoInfo').textContent = `${outgoing.enc.w}×${outgoing.enc.h} PX · ${outgoing.enc.bands.length} STRIPES · ~${Math.round(est)} S ON AIR`;
+    }
+    if (!sending) { $('send').textContent = secret ? 'SEND SECRET PHOTO' : 'SEND PHOTO'; $('send').disabled = !outgoing; }
+    $('save').disabled = !outgoing;
+    return;
+  }
+  const n = [...msg.value].length;
   const secs = frameSeconds(estimateBytes(msg.value, secret), mode()) + ($('intro').checked ? INTRO_SECONDS : 0);
   $('counter').textContent = `${n}/${MAX} CHARS · ~${secs.toFixed(1)} S ON AIR`;
   $('openWarn').hidden = secret;
@@ -62,7 +129,14 @@ document.querySelectorAll('input[name=speed]').forEach(r => r.addEventListener('
 $('intro').addEventListener('change', updateSend);
 msg.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!$('send').disabled) $('send').click(); } });
 
+async function renderPhoto(rate) {
+  const m = MODES[mode()];
+  const pk = await packPhoto(outgoing.enc, pass.value, m.id);
+  const { audio, marks } = synthesizePhoto(pk.frames, m.key, { fs: rate, amp: 0.7, intro: $('intro').checked });
+  return { audio, marks, m };
+}
 async function render(rate) {
+  if (kind === 'photo') return renderPhoto(rate);
   const m = MODES[mode()];
   const { payload, flags } = await packNote(msg.value, pass.value, m.id);
   return { audio: synthesize(payload, flags, m.key, { fs: rate, amp: 0.7, intro: $('intro').checked }), flags, m };
@@ -70,17 +144,27 @@ async function render(rate) {
 $('send').onclick = async () => {
   if (sending) { stopSending(true); return; }
   const c = audio();
-  setStatus(pass.value ? 'ENCRYPTING…' : 'SENDING OPEN NOTE…');
+  setStatus(kind === 'photo' ? (pass.value ? 'ENCRYPTING PHOTO…' : 'SENDING PHOTO…') : pass.value ? 'ENCRYPTING…' : 'SENDING OPEN NOTE…');
   try {
-    const { audio: x, m } = await render(c.sampleRate);
+    const { audio: x, m, marks } = await render(c.sampleRate);
     const buf = c.createBuffer(1, x.length, c.sampleRate); buf.copyToChannel(x, 0);
     const src = c.createBufferSource(); src.buffer = buf; src.connect(c.destination);
     sending = src; ignoreUntil = performance.now() + x.length / c.sampleRate * 1000 + 600;
     src.onended = () => stopSending(false);
     src.start();
     setLed('SD', true);
+    if (kind === 'photo' && marks) {                       // paint our own preview in time with the sound
+      const t0 = c.currentTime;
+      const tick = () => {
+        if (!sending) { drawSendPreview(null); return; }
+        const t = c.currentTime - t0; let r = 0;
+        for (const mk of marks) if (mk.index >= 0) { if (t >= mk.end) r = (mk.index + 1) * 16; else if (t > mk.start) r = mk.index * 16 + Math.floor(16 * (t - mk.start) / (mk.end - mk.start)); }
+        drawSendPreview(r); requestAnimationFrame(tick);
+      };
+      tick();
+    }
     const b = $('send'); b.textContent = 'STOP'; b.classList.add('stop'); b.classList.remove('solid'); b.disabled = false;
-    setStatus(`SENDING ${m.name.toUpperCase()} · ${Math.round(x.length / c.sampleRate)} S`);
+    setStatus(`SENDING ${kind === 'photo' ? 'PHOTO · ' : ''}${m.name.toUpperCase()} · ${Math.round(x.length / c.sampleRate)} S`);
   } catch (err) { setStatus('COULDN\'T SEND: ' + (err.message || err)); }
 };
 function stopSending(stopped) {
@@ -100,10 +184,10 @@ $('save').onclick = async () => {
     const { audio: x } = await render(44100);
     const blob = new Blob([wav(x, 44100)], { type: 'audio/wav' });
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const name = `screech-${pass.value ? 'secret' : 'open'}-note-${stamp}.wav`;
+    const name = `screech-${pass.value ? 'secret' : 'open'}-${kind}-${stamp}.wav`;
     const file = new File([blob], name, { type: 'audio/wav' });
     if (navigator.canShare && navigator.canShare({ files: [file] }) && matchMedia('(pointer: coarse)').matches) {
-      try { await navigator.share({ files: [file], title: 'Screech note' }); setStatus('SHARED.'); return; } catch (e) { if (e.name === 'AbortError') { setStatus('READY.'); return; } }
+      try { await navigator.share({ files: [file], title: kind === 'photo' ? 'Screech photo' : 'Screech note' }); setStatus('SHARED.'); return; } catch (e) { if (e.name === 'AbortError') { setStatus('READY.'); return; } }
     }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
@@ -173,11 +257,21 @@ function showProgress(p) {
   $('progress').hidden = p == null; setLed('RD', p != null);
   if (p != null) { $('progressFill').style.width = p * 100 + '%'; $('progressTxt').textContent = `RECEIVING… ${Math.round(p * 100)}%`; }
 }
+let incomingPhoto = false, photoFrac = null;
 function onEvent(e, source) {
   if (source === 'mic' && performance.now() < ignoreUntil) return;          // don't decode our own note
-  if (e.kind === 'carrier') { setLed('CD', e.on); if (!e.on) showProgress(null); }
-  else if (e.kind === 'header') { showProgress(0); setStatus(e.flags & FLAG.ENCRYPTED ? 'RECEIVING A SECRET NOTE…' : 'RECEIVING AN OPEN NOTE…'); }
-  else if (e.kind === 'progress') showProgress(e.frac);
+  if (e.kind === 'carrier') { setLed('CD', e.on); if (!e.on) { showProgress(null); photoFrac = null; drawPhotos(); } }
+  else if (e.kind === 'header') {
+    incomingPhoto = e.version === 2;
+    if (incomingPhoto) { photoFrac = 0; setLed('RD', true); setStatus(e.flags & 1 ? 'RECEIVING A SECRET PHOTO…' : 'RECEIVING A PHOTO…'); }
+    else { showProgress(0); setStatus(e.flags & FLAG.ENCRYPTED ? 'RECEIVING A SECRET NOTE…' : 'RECEIVING AN OPEN NOTE…'); }
+  }
+  else if (e.kind === 'progress') { if (incomingPhoto) { photoFrac = e.frac; drawPhotos(true); } else showProgress(e.frac); }
+  else if (e.kind === 'frame' && e.version === 2) {
+    photoFrac = null; setLed('RD', false);
+    if (e.ok) photoRx.feed(e.bytes, e.flags, e.mode);
+    else setStatus('A PHOTO STRIPE ARRIVED GARBLED. THE REST IS STILL COMING.');
+  }
   else if (e.kind === 'frame') {
     showProgress(null);
     if (e.ok) accept(e.bytes, e.flags, MODES[e.mode], source);
@@ -195,7 +289,7 @@ async function accept(bytes, flags, m, source) {
 const describe = (s) => ({ secret: '✓ SECRET NOTE (PASSPHRASE MATCHED)', open: 'OPEN NOTE RECEIVED (NOT SECRET)', locked: '🔒 SECRET NOTE. ENTER THE PASSPHRASE TO READ IT.', badpass: '✗ WRONG PASSPHRASE.', garbled: 'GARBLED NOTE.' }[s]);
 function drawNotes() {
   const ol = $('notes'); ol.innerHTML = '';
-  $('emptyMsg').hidden = received.length > 0; $('clear').hidden = !received.length;
+  $('emptyMsg').hidden = received.length > 0 || photoOrder.length > 0; $('clear').hidden = !received.length && !photoOrder.length;
   for (const n of received) {
     const li = document.createElement('li');
     const meta = document.createElement('p'); meta.className = 'meta';
@@ -219,7 +313,65 @@ function drawNotes() {
     li.append(row); ol.append(li);
   }
 }
-$('clear').onclick = () => { received.length = 0; drawNotes(); setStatus('CLEARED.'); };
+$('clear').onclick = () => { received.length = 0; photoRx.photos.clear(); photoOrder.length = 0; drawNotes(); drawPhotos(); setStatus('CLEARED.'); };
+
+// ---------------------------------------------------------------- received photos
+const photoOrder = [];                                // newest first
+const photoRx = new PhotoReceiver({ passphrase: () => pass.value, onUpdate: (p) => {
+  if (!photoOrder.includes(p.id)) { photoOrder.unshift(p.id); p.date = new Date(); }
+  const was = p.lastStatus; p.lastStatus = p.status;
+  if (p.status === 'done' && was !== 'done') {
+    setStatus(p.lost.size ? `PHOTO RECEIVED WITH ${p.lost.size} DAMAGED STRIPE${p.lost.size === 1 ? '' : 'S'}` : p.encrypted ? '✓ SECRET PHOTO RECEIVED' : 'PHOTO RECEIVED (NOT SECRET)');
+    if (navigator.vibrate) navigator.vibrate(40);
+  } else if (p.status === 'locked') setStatus('🔒 SECRET PHOTO. ENTER THE PASSPHRASE TO SEE IT.');
+  else if (p.status === 'badpass') setStatus('✗ WRONG PASSPHRASE FOR THAT PHOTO.');
+  else if (p.status === 'receiving') setStatus(`RECEIVING PHOTO… STRIPE ${Math.min(p.bands, p.next + 1)} OF ${p.bands}`);
+  drawPhotos();
+} });
+const photoEls = new Map();
+function drawPhotos(scanOnly = false) {
+  const ol = $('photos');
+  $('emptyMsg').hidden = received.length > 0 || photoOrder.length > 0; $('clear').hidden = !received.length && !photoOrder.length;
+  photoOrder.forEach((id, k) => {
+    const p = photoRx.photos.get(id); if (!p) return;
+    let el = photoEls.get(id);
+    if (!el) {
+      el = document.createElement('li');
+      el.innerHTML = '<p class="meta"></p><p class="kind"></p><div class="pframe"><canvas role="img"></canvas></div><div class="row"></div>';
+      photoEls.set(id, el);
+    }
+    if (ol.children[k] !== el) ol.insertBefore(el, ol.children[k] || null);
+    const cv = el.querySelector('canvas'), kindEl = el.querySelector('.kind'), row = el.querySelector('.row'), fr = el.querySelector('.pframe');
+    if (!scanOnly) {
+      el.querySelector('.meta').textContent = `${(p.date || new Date()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })} · PHOTO · ${(p.mode || '').toUpperCase()}`;
+      kindEl.className = 'kind';
+      const st = p.status;
+      kindEl.textContent = st === 'locked' ? '🔒 SECRET PHOTO. ENTER THE PASSPHRASE ABOVE TO SEE IT.' : st === 'badpass' ? '✗ WRONG PASSPHRASE. FIX IT ABOVE TO SEE THE PHOTO.'
+        : st === 'waiting' ? 'STRIPES ARRIVING BEFORE THE HEADER… WAITING FOR THE END.'
+        : st === 'done' ? (p.lost.size ? `PHOTO · ${p.lost.size} DAMAGED STRIPE${p.lost.size === 1 ? '' : 'S'}` : p.encrypted ? '✓ SECRET PHOTO' : 'PHOTO (NOT SECRET)')
+        : `RECEIVING… STRIPE ${Math.min(p.bands, p.next + 1)} OF ${p.bands}`;
+      if (st === 'locked') kindEl.classList.add('open'); if (st === 'badpass' || (st === 'done' && p.lost.size)) kindEl.classList.add(st === 'badpass' ? 'bad' : 'open');
+      fr.hidden = !p.rgba || st === 'locked' || st === 'badpass' || st === 'waiting';
+      cv.setAttribute('aria-label', st === 'done' ? `Received photo, ${p.w} by ${p.h} pixels` : `Photo arriving, ${p.got.size} of ${p.bands} stripes`);
+      row.innerHTML = '';
+      if (st === 'done') {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'tbtn'; b.textContent = 'SAVE PICTURE';
+        b.onclick = () => savePicture(p); row.append(b);
+      }
+    }
+    if (p.rgba && !fr.hidden) drawPixels(cv, p.rgba, p.w, p.h, null, p.status === 'receiving' && k === 0 && photoFrac != null ? p.next * 16 + Math.floor(16 * photoFrac) : null);
+  });
+}
+function savePicture(p) {
+  const S = 6, c = document.createElement('canvas'); c.width = p.w * S; c.height = p.h * S;
+  const t = document.createElement('canvas'); t.width = p.w; t.height = p.h; t.getContext('2d').putImageData(new ImageData(Uint8ClampedArray.from(p.rgba), p.w, p.h), 0, 0);
+  const g = c.getContext('2d'); g.imageSmoothingEnabled = false; g.drawImage(t, 0, 0, c.width, c.height);
+  c.toBlob(async (blob) => {
+    const name = `screech-photo-${p.id}.png`, file = new File([blob], name, { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] }) && matchMedia('(pointer: coarse)').matches) { try { await navigator.share({ files: [file] }); return; } catch {} }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }, 'image/png');
+}
 
 // decode a sound file
 $('decodeBtn').onclick = () => $('file').click();
@@ -233,7 +385,7 @@ $('file').onchange = async () => {
     for (let ch = 0; ch < ab.numberOfChannels; ch++) { const d = ab.getChannelData(ch); for (let i = 0; i < x.length; i++) x[i] += d[i] / ab.numberOfChannels; }
     const frames = decodeBuffer(x, ab.sampleRate);
     const good = frames.filter(e => e.ok);
-    for (const e of good) await accept(e.bytes, e.flags, MODES[e.mode], 'file');
+    for (const e of good) { if (e.version === 2) await photoRx.feed(e.bytes, e.flags, e.mode); else await accept(e.bytes, e.flags, MODES[e.mode], 'file'); }
     if (!good.length) setStatus(frames.some(e => e.why === 'crc') ? 'THAT FILE HOLDS A NOTE, BUT IT\'S TOO DAMAGED TO READ.' : 'NO NOTE FOUND IN THAT FILE.');
   } catch (err) { setStatus('COULDN\'T OPEN THAT FILE.'); }
 };
@@ -295,4 +447,4 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.se
 
 updateSend();
 // test hook (used by the automated tests only)
-window.__screech = { onEvent, accept, received, render };
+window.__screech = { onEvent, accept, received, render, photoRx, setKind };

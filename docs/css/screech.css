@@ -100,3 +100,17 @@ dialog::backdrop { background: rgba(0,0,0,.75); }
 .helphead h2 { font-size: 19px; font-weight: 900; }
 
 @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+/* photos */
+.kinds { display: flex; }
+.kindbtn { flex: 1; font: 700 15px var(--mono); min-height: 44px; background: none; color: var(--dim); border: 1.5px solid var(--dim); cursor: pointer; }
+.kindbtn[aria-pressed=true] { background: var(--dim); color: #000; }
+.pframe { border: 1px solid var(--dim); background: #0f0f0f; display: flex; justify-content: center; }
+.pframe canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
+.segrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.seglbl { width: 64px; font-weight: 700; }
+.seg { cursor: pointer; }
+.seg input { position: absolute; opacity: 0; width: 0; height: 0; }
+.seg span { display: inline-block; font: 700 13px var(--mono); padding: 8px 10px; min-height: 36px; border: 1.5px solid var(--green); color: var(--green); }
+.seg input:checked + span { background: var(--green); color: #000; }
+.seg input:focus-visible + span { outline: 2px dotted var(--green); outline-offset: 2px; }
