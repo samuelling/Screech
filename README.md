@@ -16,6 +16,8 @@ Secret notes by sound. Type a note, and your phone plays it as a modem screech; 
 | **Secrecy** | Text is compressed (raw deflate), then sealed with AES-256-GCM. The key is PBKDF2-HMAC-SHA256 of the passphrase (NFC, random 16-byte salt, 200,000 rounds). Packet: version · salt · IV · ciphertext · tag (45 bytes of overhead). The GCM tag proves the note wasn't changed and came from someone with the passphrase. Without a passphrase it's an **open note**, readable by anyone with a decoder. |
 | **Receiver** | Listens for all three speeds at once. The iPhone app uses the audio session's *measurement* mode, which switches off echo cancelling, noise suppression and automatic gain. |
 
+**Photos** travel too: tiny (64, 96 or 128 pixels on the long side) and slow, about half a minute to a few minutes. Each 16-pixel stripe is its own frame, so the picture paints in from the top as it arrives, and a stripe that gets garbled shows as a smear while the rest keeps coming. With a passphrase every stripe is encrypted. The format is in [PHOTO.md](PHOTO.md).
+
 A 100-character secret note takes about 12 s at Sturdy and 6 s at Quick. Hold the devices within a foot or two; across a room, strong echoes can garble a note, and the receiver just keeps listening for a resend.
 
 ## Layout
@@ -23,7 +25,7 @@ A 100-character secret note takes about 12 s at Sturdy and 6 s at Quick. Hold th
 ```
 Screech/Core/      the modem, crypto and deflate, in plain Swift (shared with the Swift package)
 Screech/App/       the iPhone app: audio engine, SwiftUI screens
-docs/              the web version (GitHub Pages); js/notes-core.js and js/notes-crypto.js are the shared protocol
+docs/              the web version (GitHub Pages); js/notes-core.js, notes-crypto.js and notes-photo.js are the shared protocol
 Tests/             Swift tests, with fixtures made by the web code (tools/make-fixtures.mjs)
 tools/             screech-cli (encode/decode WAVs) and the Swift ↔ web compatibility check
 ```
@@ -34,4 +36,4 @@ tools/             screech-cli (encode/decode WAVs) and the Swift ↔ web compat
 - **Tests (macOS or Linux):** `swift test`. On Linux it uses swift-crypto in place of CryptoKit.
 - **Compatibility:** `swift build -c release --product screech-cli && node tools/web-decode.mjs --self-test`.
 
-The web protocol files are copies of `apps/oldschool/modem/notes-core.js` and `notes-crypto.js` from RetroSynths. Keep them identical; the Swift tests' fixtures come from them.
+The web protocol files are copies of `apps/oldschool/modem/notes-core.js`, `notes-crypto.js` and `notes-photo.js` from RetroSynths. Keep them identical; the Swift tests' fixtures come from them.
