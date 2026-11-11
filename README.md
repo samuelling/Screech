@@ -3,7 +3,7 @@
 Secret notes by sound. Type a note, and your phone plays it as a modem screech; another phone listening nearby decodes it. With a shared passphrase, the note is encrypted before it ever becomes sound.
 
 - **iPhone app:** native Swift (this Xcode project).
-- **Web version:** for everyone else, at **https://samuelling.github.io/Screech/** (the `docs/` folder). It installs to a phone's home screen and works offline.
+- **Web version:** for everyone else, at **https://samuelling.github.io/Screech/** (index.html, css/, js/ and icons/ at the top of the repo). It installs to a phone's home screen and works offline.
 - **Same protocol** as the Modem's Secret Notes in [RetroSynths](https://samuelling.github.io/RetroSynths/#oldschool). All three understand each other, and CI checks that on every push.
 
 ## How it works
@@ -25,7 +25,7 @@ A 100-character secret note takes about 12 s at Sturdy and 6 s at Quick. Hold th
 ```
 Screech/Core/      the modem, crypto and deflate, in plain Swift (shared with the Swift package)
 Screech/App/       the iPhone app: audio engine, SwiftUI screens
-docs/              the web version (GitHub Pages); js/notes-core.js, notes-crypto.js and notes-photo.js are the shared protocol
+index.html, css/, js/, icons/   the web version (GitHub Pages); js/notes-core.js, notes-crypto.js and notes-photo.js are the shared protocol
 Tests/             Swift tests, with fixtures made by the web code (tools/make-fixtures.mjs)
 tools/             screech-cli (encode/decode WAVs) and the Swift ↔ web compatibility check
 ```

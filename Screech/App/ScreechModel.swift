@@ -28,7 +28,7 @@ final class ScreechModel: ObservableObject {
     // send
     @Published var message = ""
     @Published var mode: NoteMode = .sturdy
-    @Published var intro = false
+    @Published var intro = true
     @Published var sending = false
     // listen
     @Published var listening = false

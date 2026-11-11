@@ -1,4 +1,4 @@
-// Screech photos — a port of docs/js/notes-photo.js (see PHOTO.md). A tiny baseline-JPEG-style codec sent as one
+// Screech photos — a port of js/notes-photo.js (see PHOTO.md). A tiny baseline-JPEG-style codec sent as one
 // modem frame per 16-pixel stripe, so the picture paints in from the top while it arrives.
 import Foundation
 #if canImport(CryptoKit)

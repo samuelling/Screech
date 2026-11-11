@@ -32,7 +32,7 @@ console.log('fixtures:', symbols.length, 'symbol sets,', notes.length, 'notes');
 
 // ---- photos (PHOTO.md): an encrypted frame train, the web decoder's pixels, and a rendered unencrypted train
 {
-  const P = await import(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../docs/js/notes-photo.js'));
+  const P = await import(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../js/notes-photo.js'));
   const { PNG } = await import('/tmp/ph/node_modules/pngjs/lib/png.js');
   const png = PNG.sync.read(fs.readFileSync(process.env.PHOTO_SRC || '/tmp/ph/out-tiny.png'));
   const rgba = Uint8ClampedArray.from(png.data);

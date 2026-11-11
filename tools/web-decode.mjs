@@ -3,8 +3,8 @@
 //   node tools/web-decode.mjs <file.wav> <passphrase|->   decode a WAV with the web code
 import fs from 'fs'; import path from 'path'; import os from 'os'; import { execFileSync } from 'child_process';
 const here = path.dirname(new URL(import.meta.url).pathname);
-const core = await import(path.join(here, '../docs/js/notes-core.js'));
-const cry = await import(path.join(here, '../docs/js/notes-crypto.js'));
+const core = await import(path.join(here, '../js/notes-core.js'));
+const cry = await import(path.join(here, '../js/notes-crypto.js'));
 const cli = fs.existsSync(path.join(here, '../.build/release/screech-cli')) ? path.join(here, '../.build/release/screech-cli') : path.join(here, '../.build/debug/screech-cli');
 
 function readWav(file) {
@@ -49,7 +49,7 @@ for (const [mode, pass, text, rate, intro] of cases) {
 }
 // photos: Swift encodes + sends → web hears and unlocks it; pixels must match the web's own decode
 {
-  const P = await import(path.join(here, '../docs/js/notes-photo.js'));
+  const P = await import(path.join(here, '../js/notes-photo.js'));
   const src = fs.readFileSync(path.join(here, '../Tests/ScreechCoreTests/Fixtures/photo-src.rgba')), w = 64, h = 64;
   for (const [mode, pass] of [['quick', 'owl moon'], ['classic', '']]) {
     const f = path.join(dir, `photo-${mode}.wav`);

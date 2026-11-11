@@ -88,17 +88,22 @@ function drawSendPreview(rows) {
   const { enc, prev } = outgoing, cv = $('sendCanvas');
   drawPixels(cv, prev, enc.w, enc.h, rows, null);
 }
-/** draw w×h pixels big and crisp; rows = how many rows to show (null = all); scan = row of a loading line */
+/** draw w×h pixels big and crisp; rows = how many rows to show (null = all); scan = row of a loading line.
+ *  Cheap on purpose: the small source canvas is reused, and only redrawn when the pixels change. */
+const srcCache = new WeakMap();
 function drawPixels(cv, rgba, w, h, rows, scan) {
   const S = Math.max(1, Math.floor(Math.min(480 / w, 300 / h)));
   if (cv.width !== w * S || cv.height !== h * S) { cv.width = w * S; cv.height = h * S; }
+  let c = srcCache.get(cv);
+  if (!c || c.t.width !== w || c.t.height !== h) { const t = document.createElement('canvas'); t.width = w; t.height = h; c = { t, g: t.getContext('2d'), img: new ImageData(w, h), sum: -1 }; srcCache.set(cv, c); }
+  let sum = 0; for (let i = 0; i < rgba.length; i += 61) sum = (sum * 31 + rgba[i]) | 0;   // cheap change check
+  if (sum !== c.sum) { c.img.data.set(rgba); c.g.putImageData(c.img, 0, 0); c.sum = sum; }
   const g = cv.getContext('2d'); g.imageSmoothingEnabled = false;
   g.fillStyle = '#0f0f0f'; g.fillRect(0, 0, cv.width, cv.height);
-  const t = document.createElement('canvas'); t.width = w; t.height = h; t.getContext('2d').putImageData(new ImageData(Uint8ClampedArray.from(rgba), w, h), 0, 0);
   const R = rows == null ? h : Math.max(0, Math.min(h, rows));
-  if (R > 0) g.drawImage(t, 0, 0, w, R, 0, 0, w * S, R * S);
+  if (R > 0) g.drawImage(c.t, 0, 0, w, R, 0, 0, w * S, R * S);
   const line = rows != null && rows < h ? rows : scan;
-  if (line != null && line < h) { g.fillStyle = '#40ff73'; g.shadowColor = '#40ff73'; g.shadowBlur = 6; g.fillRect(0, Math.min(cv.height - 2, line * S), cv.width, 2); g.shadowBlur = 0; }
+  if (line != null && line < h) { g.fillStyle = 'rgba(64,255,115,.35)'; g.fillRect(0, Math.max(0, line * S - 2), cv.width, 6); g.fillStyle = '#40ff73'; g.fillRect(0, Math.min(cv.height - 2, line * S), cv.width, 2); }
 }
 
 // ---------------------------------------------------------------- send
@@ -224,7 +229,7 @@ async function startListening() {
   const spec = new Spectrum(c.sampleRate);
   let lv = -90;
   cap.port.onmessage = (ev) => {
-    const x = ev.data; dec.push(x);
+    const x = ev.data; dec.push(x); 
     for (const row of spec.process(x)) fall.push(row);
     let p = 0; for (let i = 0; i < x.length; i++) p += x[i] * x[i];
     lv = Math.max(10 * Math.log10(p / x.length + 1e-12), lv - 1.5);
@@ -266,7 +271,7 @@ function onEvent(e, source) {
     if (incomingPhoto) { photoFrac = 0; setLed('RD', true); setStatus(e.flags & 1 ? 'RECEIVING A SECRET PHOTO…' : 'RECEIVING A PHOTO…'); }
     else { showProgress(0); setStatus(e.flags & FLAG.ENCRYPTED ? 'RECEIVING A SECRET NOTE…' : 'RECEIVING AN OPEN NOTE…'); }
   }
-  else if (e.kind === 'progress') { if (incomingPhoto) { photoFrac = e.frac; drawPhotos(true); } else showProgress(e.frac); }
+  else if (e.kind === 'progress') { if (incomingPhoto) { photoFrac = e.frac; scheduleScan(); } else showProgress(e.frac); }
   else if (e.kind === 'frame' && e.version === 2) {
     photoFrac = null; setLed('RD', false);
     if (e.ok) photoRx.feed(e.bytes, e.flags, e.mode);
@@ -329,6 +334,8 @@ const photoRx = new PhotoReceiver({ passphrase: () => pass.value, onUpdate: (p) 
   drawPhotos();
 } });
 const photoEls = new Map();
+let scanT = 0;
+const scheduleScan = () => { if (!scanT) scanT = setTimeout(() => { scanT = 0; drawPhotos(true); }, 150); };
 function drawPhotos(scanOnly = false) {
   const ol = $('photos');
   $('emptyMsg').hidden = received.length > 0 || photoOrder.length > 0; $('clear').hidden = !received.length && !photoOrder.length;
