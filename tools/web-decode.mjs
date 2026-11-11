@@ -47,5 +47,23 @@ for (const [mode, pass, text, rate, intro] of cases) {
   if (!ok1) console.log('   web got:', got); if (!ok2) console.log('   swift got:', sw);
   bad += !ok1 + !ok2;
 }
+// photos: Swift encodes + sends → web hears and unlocks it; pixels must match the web's own decode
+{
+  const P = await import(path.join(here, '../docs/js/notes-photo.js'));
+  const src = fs.readFileSync(path.join(here, '../Tests/ScreechCoreTests/Fixtures/photo-src.rgba')), w = 64, h = 64;
+  for (const [mode, pass] of [['quick', 'owl moon'], ['classic', '']]) {
+    const f = path.join(dir, `photo-${mode}.wav`);
+    execFileSync(cli, ['photo', mode, pass || '-', path.join(here, '../Tests/ScreechCoreTests/Fixtures/photo-src.rgba'), String(w), String(h), f]);
+    const { s, rate } = readWav(f); let last = null; const q = [];
+    const rx = new P.PhotoReceiver({ passphrase: () => pass, onUpdate: (p) => { last = p; } });
+    const dec = new core.NoteDecoder({ sampleRate: rate, onEvent: (e) => { if (e.kind === 'frame' && e.ok && e.version === 2) q.push(rx.feed(e.bytes, e.flags, e.mode)); } });
+    dec.push(s); dec.flush(0.5); await Promise.all(q);
+    const ref = new Uint8ClampedArray(w * h * 4), enc = P.encodeImage(Uint8ClampedArray.from(src), w, h, { quality: 35 }); enc.bands.forEach((b, i) => P.decodeBand(b, i, enc, ref));
+    let md = 0; if (last) for (let i = 0; i < ref.length; i++) md = Math.max(md, Math.abs(ref[i] - last.rgba[i]));
+    const ok = last && last.status === 'done' && last.got.size === last.bands && md <= 2;
+    console.log(`${ok ? '✓' : '✗'} Swift→web photo ${mode}${pass ? ' (secret)' : ''}: ${last ? last.status + ' ' + last.got.size + '/' + last.bands + ' max pixel diff ' + md : 'nothing'}`);
+    bad += !ok;
+  }
+}
 if (bad) { console.log(bad, 'failure(s)'); process.exit(1); }
 console.log('all compatible');

@@ -3,10 +3,12 @@ import Foundation
 public enum NoteEvent: Sendable {
     case carrier(on: Bool, mode: String)
     case sync(mode: String)
-    case header(mode: String, length: Int, flags: Int, seconds: Double)
+    case header(mode: String, version: Int, length: Int, flags: Int, seconds: Double)
     case progress(mode: String, fraction: Double)
     /// ok == false: why is "crc" (arrived damaged) or "header" (lost the frame start)
     case frame(ok: Bool, why: String, mode: String, flags: Int, bytes: [UInt8]?, quality: Double)
+    /// a version-2 (photo) frame; feed ok ones to PhotoReceiver
+    case photo(ok: Bool, mode: String, flags: Int, bytes: [UInt8]?)
 }
 
 /// One mode's demodulator + frame state machine at `NoteModem.decoderRate`. A straight port of the web decoder.
@@ -33,7 +35,7 @@ final class Demod {
     var hist: [[Float]] = []
     var cand: (s: Double, end: Int)? = nil
     var soft: [Double] = []
-    var flags = 0, len = 0, need = 0, idx = 0
+    var flags = 0, len = 0, need = 0, idx = 0, version = 1
 
     init(_ m: NoteMode, emit: @escaping (NoteEvent) -> Void) {
         self.m = m; self.emit = emit
@@ -200,13 +202,13 @@ final class Demod {
         for (i, ev) in syms.enumerated() { softBits(ev, m.sync.count + i, into: &s) }
         let d = Interleaver.deinterleave(Array(s.prefix(NoteModem.headerCodedBits)), columns: NoteModem.interleaveHeader)
         let hb = Bits.toBytes(Whitening.apply(Conv.viterbi(d, bits: NoteModem.headerBytes * 8), seed: NoteModem.seedHeader))
-        return Checksum.crc8(hb[0..<3]) == hb[3] && Int(hb[0] >> 4) == NoteModem.frameVersion && Int((hb[0] >> 2) & 3) == m.id ? hb : nil
+        return Checksum.crc8(hb[0..<3]) == hb[3] && NoteModem.supportedVersions.contains(Int(hb[0] >> 4)) && Int((hb[0] >> 2) & 3) == m.id ? hb : nil
     }
 
     func startPayload(_ hb: [UInt8]) {
-        flags = Int(hb[0] & 3); len = (Int(hb[1]) << 8) | Int(hb[2]); need = NoteModem.payloadCodedBits(len); soft = []
+        version = Int(hb[0] >> 4); flags = Int(hb[0] & 3); len = (Int(hb[1]) << 8) | Int(hb[2]); need = NoteModem.payloadCodedBits(len); soft = []
         idx = m.sync.count + NoteModem.symbols(forBits: NoteModem.headerCodedBits, m)
-        emit(.header(mode: m.key, length: len, flags: flags, seconds: NoteModem.frameSeconds(bytes: len, mode: m)))
+        emit(.header(mode: m.key, version: version, length: len, flags: flags, seconds: NoteModem.frameSeconds(bytes: len, mode: m)))
         state = .pay
     }
 
@@ -222,7 +224,8 @@ final class Demod {
             let got = (UInt32(body[len]) << 24) | (UInt32(body[len + 1]) << 16) | (UInt32(body[len + 2]) << 8) | UInt32(body[len + 3])
             let ok = got == c
             let q = soft.reduce(0) { $0 + abs($1) } / Double(max(1, soft.count))
-            emit(.frame(ok: ok, why: ok ? "" : "crc", mode: m.key, flags: flags, bytes: ok ? pay : nil, quality: q))
+            if version == NoteModem.photoFrameVersion { emit(.photo(ok: ok, mode: m.key, flags: flags, bytes: ok ? pay : nil)) }
+            else { emit(.frame(ok: ok, why: ok ? "" : "crc", mode: m.key, flags: flags, bytes: ok ? pay : nil, quality: q)) }
             reset("done")
         }
     }
@@ -299,6 +302,18 @@ public final class NoteDecoder {
     /// feed a little silence so a note at the very end of a file completes
     public func flush(seconds: Double = 0.3) { push([Float](repeating: 0, count: Int((seconds * sampleRate).rounded()))) }
     public var busy: Bool { demods.contains { $0.state != .search } }
+
+    /// decode a whole buffer, return note and photo frame events
+    public static func decodeAll(_ samples: [Float], sampleRate: Double) -> [NoteEvent] {
+        var out: [NoteEvent] = []
+        let d = NoteDecoder(sampleRate: sampleRate) { e in
+            switch e { case .frame, .photo: out.append(e); default: break }
+        }
+        var i = 0
+        while i < samples.count { let j = min(samples.count, i + 4096); d.push(Array(samples[i..<j])); i = j }
+        d.flush(seconds: 0.5)
+        return out
+    }
 
     /// decode a whole buffer, return the frame events
     public static func decode(_ samples: [Float], sampleRate: Double) -> [NoteEvent] {

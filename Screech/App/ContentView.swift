@@ -50,7 +50,7 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 LED(label: "MR", on: model.listening, color: Phosphor.green, help: "Microphone listening")
                 LED(label: "CD", on: model.carrier, color: Phosphor.amber, help: "Carrier detected")
-                LED(label: "RD", on: model.receiveProgress != nil, color: Phosphor.green, help: "Receiving data")
+                LED(label: "RD", on: model.receiveProgress != nil || model.incomingPhotoFraction != nil, color: Phosphor.green, help: "Receiving data")
                 LED(label: "SD", on: model.sending, color: Phosphor.red, help: "Sending data")
             }
             .padding(8)

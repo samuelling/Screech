@@ -29,3 +29,22 @@ fs.writeFileSync(path.join(out, 'notes.json'), JSON.stringify(notes, null, 1));
 const sample = 'Meet at the hammocks at 4. Meet at the hammocks at 4. Bring the red flashlight and the red thermos.';
 fs.writeFileSync(path.join(out, 'deflate.json'), JSON.stringify({ text: sample, raw: [...zlib.deflateRawSync(Buffer.from(sample))], rawBest: [...zlib.deflateRawSync(Buffer.from(sample.repeat(5)), { level: 9 })], textBest: sample.repeat(5) }));
 console.log('fixtures:', symbols.length, 'symbol sets,', notes.length, 'notes');
+
+// ---- photos (PHOTO.md): an encrypted frame train, the web decoder's pixels, and a rendered unencrypted train
+{
+  const P = await import(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../docs/js/notes-photo.js'));
+  const { PNG } = await import('/tmp/ph/node_modules/pngjs/lib/png.js');
+  const png = PNG.sync.read(fs.readFileSync(process.env.PHOTO_SRC || '/tmp/ph/out-tiny.png'));
+  const rgba = Uint8ClampedArray.from(png.data);
+  fs.writeFileSync(path.join(out, 'photo-src.rgba'), Buffer.from(rgba));
+  const enc = P.encodeImage(rgba, png.width, png.height, { quality: P.QUALITY.medium });
+  const pk = await P.packPhoto(enc, 'tangerine owl', core.MODES.quick.id);
+  const ref = new Uint8ClampedArray(png.width * png.height * 4); enc.bands.forEach((b, i) => P.decodeBand(b, i, enc, ref));
+  fs.writeFileSync(path.join(out, 'photo-ref.rgba'), Buffer.from(ref));
+  fs.writeFileSync(path.join(out, 'photo.json'), JSON.stringify({ w: png.width, h: png.height, passphrase: 'tangerine owl', mode: 'quick',
+    frames: pk.frames.map(f => ({ payload: [...f.payload], flags: f.flags })), bandBytes: enc.bands.map(b => [...b]) }));
+  const open = await P.packPhoto(enc, '', core.MODES.quick.id);
+  const { audio } = P.synthesizePhoto(open.frames, 'quick', { fs: 12000, amp: 0.4 });
+  fs.writeFileSync(path.join(out, 'photo-quick.wav'), wav(audio, 12000));
+  console.log('photo fixtures:', png.width + 'x' + png.height, pk.frames.length, 'frames');
+}

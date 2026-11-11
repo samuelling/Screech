@@ -4,8 +4,8 @@ public enum NoteSynth {
     /// Render a note at sample rate `fs`: continuous-phase tones with a short raised-cosine glide between symbols,
     /// 10 ms fades, peak `amp`. `intro` prepends a fake dial-up handshake flourish (the receiver ignores it).
     public static func render(payload: [UInt8], flags: Int, mode m: NoteMode, sampleRate fs: Double = 48000,
-                              amplitude amp: Double = 0.5, intro: Bool = false) -> [Float] {
-        let tones = NoteModem.frameSymbols(payload: payload, flags: flags, mode: m).map { m.tones[$0] }
+                              amplitude amp: Double = 0.5, intro: Bool = false, version: Int = NoteModem.frameVersion) -> [Float] {
+        let tones = NoteModem.frameSymbols(payload: payload, flags: flags, mode: m, version: version).map { m.tones[$0] }
         let introS = intro ? NoteModem.introSeconds : 0, lead = 0.03
         let nSym = tones.count
         let N = Int(((introS + lead + Double(nSym) / Double(m.baud) + 0.03) * fs).rounded(.up))

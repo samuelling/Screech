@@ -39,4 +39,13 @@ if a[1] == "encode", a.count >= 6 {
             } else { print("FAIL \(mode) \(why)") }
         }
     }
+} else if a[1] == "photo", a.count >= 8 {
+    // screech-cli photo <mode> <pass|-> <in.rgba> <w> <h> <out.wav>
+    guard let m = NoteMode.byKey(a[2]), let w = Int(a[5]), let h = Int(a[6]) else { die("usage: photo mode pass in.rgba w h out.wav") }
+    let px = [UInt8](try Data(contentsOf: URL(fileURLWithPath: a[4])))
+    let enc = PhotoCodec.encode(rgba: px, w: w, h: h, quality: 35)
+    let (_, frames) = try PhotoPacker.pack(enc, passphrase: a[3] == "-" ? "" : a[3])
+    let (audio, _) = PhotoPacker.render(frames, mode: m, sampleRate: 16000, amplitude: 0.4)
+    try NoteSynth.wav(audio, sampleRate: 16000).write(to: URL(fileURLWithPath: a[7]))
+    print("wrote \(a[7]) \(frames.count) frames")
 } else { die("usage") }

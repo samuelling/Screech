@@ -52,7 +52,9 @@ public enum NoteFlag {
 public enum NoteModem {
     /// the decoder's internal sample rate: 32 samples/symbol at 300 baud
     public static let decoderRate = 9600.0
-    public static let frameVersion = 1
+    public static let frameVersion = 1            // text notes
+    public static let photoFrameVersion = 2       // photo frames (Photo.swift)
+    static let supportedVersions = [1, 2]
     static let headerBytes = 4, postSymbols = 4
     static let seedHeader = 0x1a5, seedPayload = 0x0f3
     static let interleaveHeader = 8, interleavePayload = 24
@@ -75,9 +77,9 @@ public enum NoteModem {
     static func mapSymbol(_ m: NoteMode, _ v: Int, _ i: Int) -> Int { gray(v) * m.banks + (i % m.banks) }
 
     /// tone indices for a whole frame
-    public static func frameSymbols(payload: [UInt8], flags: Int, mode m: NoteMode) -> [Int] {
+    public static func frameSymbols(payload: [UInt8], flags: Int, mode m: NoteMode, version: Int = frameVersion) -> [Int] {
         precondition(payload.count <= maxPayload)
-        var hdr: [UInt8] = [UInt8((frameVersion << 4) | ((m.id & 3) << 2) | (flags & 3)), UInt8(payload.count >> 8), UInt8(payload.count & 255), 0]
+        var hdr: [UInt8] = [UInt8((version << 4) | ((m.id & 3) << 2) | (flags & 3)), UInt8(payload.count >> 8), UInt8(payload.count & 255), 0]
         hdr[3] = Checksum.crc8(hdr[0..<3])
         let hBits = Interleaver.interleave(Conv.encode(Whitening.apply(Bits.from(hdr), seed: seedHeader)), columns: interleaveHeader)
         let c = Checksum.crc32(payload)

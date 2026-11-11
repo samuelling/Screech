@@ -14,7 +14,13 @@ struct ReceivedNote: Identifiable, Equatable {
 @MainActor
 final class ScreechModel: ObservableObject {
     // shared
-    @Published var passphrase = "" { didSet { if rememberPassphrase { Keychain.save(passphrase) } } }
+    @Published var passphrase = "" {
+        didSet {
+            if rememberPassphrase { Keychain.save(passphrase) }
+            let box = passBox, rx = photoRx, pass = passphrase
+            photoQueue.async { box.value = pass; let ps = rx.retry(); for p in ps { let s = ScreechModel.snapshot(p); Task { @MainActor in self.upsert(s) } } }
+        }
+    }
     @Published var rememberPassphrase = Keychain.load() != nil {
         didSet { if rememberPassphrase { Keychain.save(passphrase) } else { Keychain.delete() } }
     }
@@ -33,6 +39,21 @@ final class ScreechModel: ObservableObject {
     @Published var received: [ReceivedNote] = []
     @Published var micDenied = false
     @Published var busyDecodingFile = false
+    // photos
+    enum SendKind: String, CaseIterable { case note = "NOTE", photo = "PHOTO" }
+    @Published var sendKind: SendKind = .note
+    @Published var photoSource: UIImage? = nil { didSet { prepPhoto() } }
+    @Published var photoSize = "small" { didSet { prepPhoto() } }
+    @Published var photoQuality = "medium" { didSet { prepPhoto() } }
+    @Published var outgoing: OutgoingPhoto? = nil
+    @Published var sendRevealRows: Int? = nil
+    @Published var photos: [ReceivedPhoto] = []
+    @Published var incomingPhotoFraction: Double? = nil
+    private let photoQueue = DispatchQueue(label: "screech.photo")
+    private let passBox: PassBox
+    private let photoRx: PhotoReceiver
+    private var revealTimer: Timer?
+    private var incomingIsPhoto = false
 
     static let maxChars = 280
     private let audio = AudioIO()
@@ -41,6 +62,9 @@ final class ScreechModel: ObservableObject {
     private var ignoreUntil = Date.distantPast
 
     init() {
+        let box = PassBox()
+        passBox = box
+        photoRx = PhotoReceiver(passphrase: { box.value })
         if let p = Keychain.load() { passphrase = p }
         audio.onInterrupted = { [weak self] in Task { @MainActor in self?.interrupted() } }
     }
@@ -74,6 +98,7 @@ final class ScreechModel: ObservableObject {
     private func sendFinished(stopped: Bool = false) {
         guard sending else { return }
         sending = false
+        revealTimer?.invalidate(); revealTimer = nil; sendRevealRows = nil
         status = stopped ? "STOPPED." : "SENT."
         ignoreUntil = Date().addingTimeInterval(0.4)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -141,12 +166,17 @@ final class ScreechModel: ObservableObject {
         switch e {
         case .carrier(let on, _):
             carrier = on
-            if !on { receiveProgress = nil }
-        case .header(_, _, let flags, _):
-            receiveProgress = 0
-            status = flags & NoteFlag.encrypted != 0 ? "RECEIVING A SECRET NOTE…" : "RECEIVING AN OPEN NOTE…"
+            if !on { receiveProgress = nil; incomingPhotoFraction = nil }
+        case .header(_, let version, _, let flags, _):
+            incomingIsPhoto = version == NoteModem.photoFrameVersion
+            if incomingIsPhoto { incomingPhotoFraction = 0; status = flags & 1 != 0 ? "RECEIVING A SECRET PHOTO…" : "RECEIVING A PHOTO…" }
+            else { receiveProgress = 0; status = flags & NoteFlag.encrypted != 0 ? "RECEIVING A SECRET NOTE…" : "RECEIVING AN OPEN NOTE…" }
         case .progress(_, let f):
-            receiveProgress = f
+            if incomingIsPhoto { incomingPhotoFraction = f } else { receiveProgress = f }
+        case .photo(let ok, let modeKey, let flags, let bytes):
+            incomingPhotoFraction = nil
+            if ok, let b = bytes { feedPhoto(b, flags: flags, mode: modeKey) }
+            else { status = "A PHOTO STRIPE ARRIVED GARBLED. THE REST IS STILL COMING." }
         case .frame(let ok, let why, let modeKey, let flags, let bytes, _):
             receiveProgress = nil
             guard let m = NoteMode.byKey(modeKey) else { return }
@@ -197,11 +227,12 @@ final class ScreechModel: ObservableObject {
             defer { if scoped { url.stopAccessingSecurityScopedResource() } }
             do {
                 let (s, rate) = try AudioIO.readFile(url)
-                let frames = NoteDecoder.decode(s, sampleRate: rate)
+                let frames = NoteDecoder.decodeAll(s, sampleRate: rate)
                 await MainActor.run {
                     self.busyDecodingFile = false
                     var found = false
                     for f in frames {
+                        if case let .photo(true, k, flags, b?) = f { found = true; self.feedPhoto(b, flags: flags, mode: k) }
                         if case let .frame(true, _, k, flags, b?, _) = f, let m = NoteMode.byKey(k) {
                             found = true; self.accept(bytes: b, flags: flags, mode: m, source: url.lastPathComponent)
                         }
@@ -217,6 +248,124 @@ final class ScreechModel: ObservableObject {
             }
         }
     }
+
+    // MARK: photos
+    var photoAirtime: Double {
+        guard let o = outgoing else { return 0 }
+        let enc = !passphrase.isEmpty
+        var t = 2 * (NoteModem.frameSeconds(bytes: 11 + (enc ? 24 : 0), mode: mode) + PhotoCodec.gapSeconds)
+        for b in o.encoded.bands { t += NoteModem.frameSeconds(bytes: 4 + b.count + (enc ? 16 : 0), mode: mode) + PhotoCodec.gapSeconds }
+        return t + (intro ? NoteModem.introSeconds : 0)
+    }
+
+    private func prepPhoto() {
+        guard let img = photoSource else { outgoing = nil; return }
+        let L = PhotoCodec.sizes.first { $0.key == photoSize }?.longest ?? 96
+        let q = PhotoCodec.qualities.first { $0.key == photoQuality }?.q ?? 35
+        let pw = Int(img.size.width * img.scale), ph = Int(img.size.height * img.scale)
+        Task.detached(priority: .userInitiated) {
+            let (w, h) = PhotoCodec.fitSize(max(1, pw), max(1, ph), longest: L)
+            let px = PixelImage.rgba(from: img, w: w, h: h)
+            let enc = PhotoCodec.encode(rgba: px, w: w, h: h, quality: q)
+            var out = [UInt8](repeating: 0, count: w * h * 4)
+            for (i, b) in enc.bands.enumerated() { PhotoCodec.decodeBand(b, band: i, w: w, h: h, quality: q, gray: false, into: &out) }
+            let prev = PixelImage.cgImage(rgba: out, w: w, h: h)
+            await MainActor.run { self.outgoing = OutgoingPhoto(encoded: enc, preview: prev, bytes: enc.bands.reduce(0) { $0 + $1.count }) }
+        }
+    }
+
+    func sendPhoto() {
+        guard let o = outgoing, !sending else { return }
+        let pass = passphrase, m = mode, intro = intro, audio = self.audio, rows = o.encoded.h
+        sending = true; sendRevealRows = 0
+        status = pass.isEmpty ? "SENDING PHOTO (NOT SECRET)…" : "ENCRYPTING PHOTO…"
+        Task.detached(priority: .userInitiated) {
+            do {
+                let (_, frames) = try PhotoPacker.pack(o.encoded, passphrase: pass)
+                let (s, marks) = PhotoPacker.render(frames, mode: m, sampleRate: AudioIO.playerRate, amplitude: 0.7, intro: intro)
+                let dur = Double(s.count) / AudioIO.playerRate
+                await MainActor.run {
+                    self.status = "SENDING PHOTO · \(m.name.uppercased()) · \(Int(dur + 0.5)) S"
+                    self.ignoreUntil = Date().addingTimeInterval(dur + 0.6)
+                    self.startReveal(marks: marks, rows: rows)
+                }
+                try audio.play(s) { Task { @MainActor in self.sendFinished() } }
+            } catch {
+                await MainActor.run { self.sending = false; self.sendRevealRows = nil; self.status = "COULDN'T SEND: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    /// the sender's own preview paints in, stripe by stripe, in time with the sound
+    private func startReveal(marks: [(start: Double, end: Double, index: Int)], rows: Int) {
+        revealTimer?.invalidate()
+        let t0 = Date()
+        revealTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.sending else { return }
+                let t = Date().timeIntervalSince(t0)
+                var r = 0
+                for mk in marks where mk.index >= 0 {
+                    if t >= mk.end { r = (mk.index + 1) * 16 } else if t > mk.start { r = mk.index * 16 + Int(16 * (t - mk.start) / (mk.end - mk.start)) }
+                }
+                self.sendRevealRows = min(rows, r)
+            }
+        }
+    }
+
+    func photoFile() async throws -> URL {
+        guard let o = outgoing else { throw NSError(domain: "Screech", code: 4) }
+        let pass = passphrase, m = mode, intro = intro
+        return try await Task.detached(priority: .userInitiated) {
+            let (_, frames) = try PhotoPacker.pack(o.encoded, passphrase: pass)
+            let (s, _) = PhotoPacker.render(frames, mode: m, sampleRate: 44100, amplitude: 0.7, intro: intro)
+            let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd-HHmmss"
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("screech-\(pass.isEmpty ? "open" : "secret")-photo-\(df.string(from: Date())).wav")
+            try NoteSynth.wav(s, sampleRate: 44100).write(to: url)
+            return url
+        }.value
+    }
+
+    private func feedPhoto(_ b: [UInt8], flags: Int, mode: String) {
+        let rx = photoRx
+        photoQueue.async {
+            guard let p = rx.feed(b, flags: flags, mode: mode) else { return }
+            let s = ScreechModel.snapshot(p)
+            Task { @MainActor in self.upsert(s) }
+        }
+    }
+
+    nonisolated static func snapshot(_ p: PhotoReceiver.Photo) -> ReceivedPhoto {
+        var r = ReceivedPhoto(id: p.id)
+        r.mode = p.mode; r.w = p.w; r.h = p.h; r.bands = p.bands; r.got = p.got.count; r.lost = p.lost.sorted(); r.next = p.next
+        r.status = p.status; r.encrypted = p.encrypted
+        r.image = (p.status == .locked || p.status == .wrongPassphrase) ? nil : PixelImage.cgImage(rgba: p.rgba, w: p.w, h: p.h)
+        return r
+    }
+
+    private func upsert(_ s: ReceivedPhoto) {
+        var s = s
+        if let i = photos.firstIndex(where: { $0.id == s.id }) {
+            let was = photos[i].status
+            s.date = photos[i].date; photos[i] = s
+            if was != .done && s.status == .done { photoDone(s) }
+        } else {
+            photos.insert(s, at: 0)
+            if s.status == .done { photoDone(s) }
+        }
+        switch s.status {
+        case .locked: status = "🔒 SECRET PHOTO. ENTER THE PASSPHRASE TO SEE IT."
+        case .wrongPassphrase: status = "✗ WRONG PASSPHRASE FOR THAT PHOTO."
+        case .receiving: status = "RECEIVING PHOTO… STRIPE \(min(s.bands, s.next + 1)) OF \(s.bands)"
+        default: break
+        }
+    }
+    private func photoDone(_ s: ReceivedPhoto) {
+        status = s.lost.isEmpty ? (s.encrypted ? "✓ SECRET PHOTO RECEIVED" : "PHOTO RECEIVED (NOT SECRET)") : "PHOTO RECEIVED WITH \(s.lost.count) DAMAGED STRIPE\(s.lost.count == 1 ? "" : "S")"
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        announce(status)
+    }
+    func clearPhotos() { photos.removeAll() }
 
     // MARK: text
     static func describe(_ s: NoteStatus) -> String {

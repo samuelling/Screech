@@ -8,6 +8,28 @@ struct SendPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 0) {
+                ForEach(ScreechModel.SendKind.allCases, id: \.self) { k in
+                    Button(k.rawValue) { model.sendKind = k; editing = false }
+                        .buttonStyle(TermButtonStyle(prominent: model.sendKind == k, color: Phosphor.dim))
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Send a \(k.rawValue.lowercased())")
+                        .accessibilityAddTraits(model.sendKind == k ? .isSelected : [])
+                }
+            }
+            .disabled(model.sending)
+            if model.sendKind == .photo { PhotoSendSection() } else { noteSection }
+            speedSection
+            if model.sendKind == .photo { PhotoSendSection.Actions() } else { noteButtons }
+            Text("Hold your phone a few inches from the other device and turn the volume up. Their Screech (or RetroSynths' Modem) must be listening.")
+                .font(Phosphor.mono(.caption)).phosphor(Phosphor.dim)
+        }
+        .padding(.top, 4)
+        .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
+        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("DONE") { editing = false } } }
+    }
+
+    @ViewBuilder private var noteSection: some View {
             Rule(title: "MESSAGE")
             ZStack(alignment: .topLeading) {
                 if model.message.isEmpty {
@@ -33,7 +55,9 @@ struct SendPanel: View {
                 Text("NO PASSPHRASE: THIS WILL BE AN OPEN NOTE. ANYONE WITH A DECODER CAN READ IT.")
                     .font(Phosphor.mono(.caption, weight: .bold)).phosphor(Phosphor.amber)
             }
+    }
 
+    @ViewBuilder private var speedSection: some View {
             Rule(title: "SPEED")
             VStack(alignment: .leading, spacing: 2) {
                 ForEach(NoteMode.all) { m in
@@ -57,7 +81,9 @@ struct SendPanel: View {
                 Text("FAKE DIAL-UP HANDSHAKE FIRST").font(Phosphor.mono(.callout, weight: .semibold)).phosphor()
             }
             .toggleStyle(CheckboxStyle())
+    }
 
+    @ViewBuilder private var noteButtons: some View {
             HStack(spacing: 10) {
                 if model.sending {
                     Button("STOP") { model.stopSending() }.buttonStyle(TermButtonStyle(prominent: true, color: Phosphor.red))
@@ -74,12 +100,6 @@ struct SendPanel: View {
                 .disabled(model.message.isEmpty || preparing)
                 .accessibilityHint("Makes an audio file of the note that you can text or email.")
             }
-            Text("Hold your phone a few inches from the other device and turn the volume up. Their Screech (or RetroSynths' Modem) must be listening.")
-                .font(Phosphor.mono(.caption)).phosphor(Phosphor.dim)
-        }
-        .padding(.top, 4)
-        .sheet(item: $shareURL) { url in ShareSheet(items: [url]) }
-        .toolbar { ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("DONE") { editing = false } } }
     }
 }
 

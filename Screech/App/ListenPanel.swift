@@ -64,7 +64,8 @@ struct ListenPanel: View {
             }
 
             Rule(title: "RECEIVED")
-            if model.received.isEmpty {
+            ForEach(model.photos) { p in PhotoRow(photo: p, isNewest: model.photos.first?.id == p.id) }
+            if model.received.isEmpty && model.photos.isEmpty {
                 Text("NOTHING YET. NOTES YOU HEAR APPEAR HERE (THEY'RE NOT SAVED WHEN YOU CLOSE THE APP).")
                     .font(Phosphor.mono(.caption)).phosphor(Phosphor.dim)
             }
@@ -72,7 +73,7 @@ struct ListenPanel: View {
             HStack(spacing: 10) {
                 Button(model.busyDecodingFile ? "DECODING…" : "DECODE A SOUND FILE") { importing = true }
                     .buttonStyle(TermButtonStyle()).disabled(model.busyDecodingFile)
-                if !model.received.isEmpty { Button("CLEAR") { model.clearReceived() }.buttonStyle(TermButtonStyle(color: Phosphor.dim)) }
+                if !model.received.isEmpty || !model.photos.isEmpty { Button("CLEAR") { model.clearReceived(); model.clearPhotos() }.buttonStyle(TermButtonStyle(color: Phosphor.dim)) }
             }
         }
         .padding(.top, 4)

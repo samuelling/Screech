@@ -12,7 +12,8 @@
 // clock mismatch between devices is followed, and all soft decisions are energy ratios (level-independent).
 
 export const NOTE_FS = 9600;          // decoder's internal rate: 32 samples/symbol at 300 baud, 64 at 150 baud
-export const FRAME_VERSION = 1;
+export const FRAME_VERSION = 1;          // text notes
+export const SUPPORTED_VERSIONS = [1, 2];  // 2 = photo frames (notes-photo.js)
 export const FLAG = { ENCRYPTED: 1, DEFLATE: 2 };
 
 const range = (a, n, step) => Array.from({ length: n }, (_, i) => a + i * step);
@@ -81,9 +82,9 @@ const hdrCoded = () => (HDR_BYTES * 8 + K - 1) * 2;                          // 
 const payCoded = (n) => ((n + 4) * 8 + K - 1) * 2;
 const symsFor = (bits, m) => Math.ceil(bits / m.bps);
 /** symbols (as tone indices) for a frame; sync/hdr/payload symbol i uses hop index i (Sturdy) */
-export function frameSymbols(payload, flags, mode) {
+export function frameSymbols(payload, flags, mode, version = FRAME_VERSION) {
   const m = typeof mode === 'string' ? (MODES[mode] || MODE_VARIANTS[mode]) : mode;
-  const hdr = [(FRAME_VERSION << 4) | ((m.id & 3) << 2) | (flags & 3), payload.length >> 8, payload.length & 255, 0]; hdr[3] = crc8(hdr.slice(0, 3));
+  const hdr = [(version << 4) | ((m.id & 3) << 2) | (flags & 3), payload.length >> 8, payload.length & 255, 0]; hdr[3] = crc8(hdr.slice(0, 3));
   const hBits = interleave(convEncode(whiten(bytesToBits(hdr), SEED_HDR)), IL_HDR);
   const body = new Uint8Array(payload.length + 4); body.set(payload); const c = crc32(payload); body[payload.length] = c >>> 24; body[payload.length + 1] = (c >>> 16) & 255; body[payload.length + 2] = (c >>> 8) & 255; body[payload.length + 3] = c & 255;
   const pBits = interleave(convEncode(whiten(bytesToBits(body), SEED_PAY)), IL_PAY);
@@ -114,8 +115,8 @@ export const INTRO_SECONDS = 1.75;
  * symbol rate) with a short raised-cosine glide between symbols, 10 ms fades, peak `amp`.
  * `intro`: a fake dial-up handshake flourish before the preamble (ignored by the receiver).
  */
-export function synthesize(payload, flags, mode, { fs = 48000, amp = 0.5, intro = false } = {}) {
-  const m = MODES[mode] || MODE_VARIANTS[mode]; const tones = frameSymbols(payload, flags, m).map(t => m.tones[t]);
+export function synthesize(payload, flags, mode, { fs = 48000, amp = 0.5, intro = false, version = FRAME_VERSION } = {}) {
+  const m = MODES[mode] || MODE_VARIANTS[mode]; const tones = frameSymbols(payload, flags, m, version).map(t => m.tones[t]);
   const introS = intro ? INTRO_SECONDS : 0, lead = 0.03;
   const nSym = tones.length, N = Math.ceil((introS + lead + nSym / m.baud + 0.03) * fs);
   const out = new Float32Array(N);
@@ -272,13 +273,13 @@ class Demod {
     syms.forEach((ev, i) => this._softBits(ev, m.sync.length + i));
     const s = deinterleave(Float32Array.from(this.soft.slice(0, hdrCoded())), IL_HDR); this.soft = save;
     const hb = bitsToBytes(whiten(viterbi(s, HDR_BYTES * 8), SEED_HDR));
-    return crc8(hb.subarray(0, 3)) === hb[3] && (hb[0] >> 4) === FRAME_VERSION && ((hb[0] >> 2) & 3) === m.id ? hb : null;
+    return crc8(hb.subarray(0, 3)) === hb[3] && SUPPORTED_VERSIONS.includes(hb[0] >> 4) && ((hb[0] >> 2) & 3) === m.id ? hb : null;
   }
   _startPayload(hb) {
     const m = this.m;
-    this.flags = hb[0] & 3; this.len = (hb[1] << 8) | hb[2]; this.need = payCoded(this.len); this.soft = [];
+    this.version = hb[0] >> 4; this.flags = hb[0] & 3; this.len = (hb[1] << 8) | hb[2]; this.need = payCoded(this.len); this.soft = [];
     this.idx = m.sync.length + symsFor(hdrCoded(), m);
-    this.emit({ kind: 'header', mode: m.key, len: this.len, flags: this.flags, seconds: frameSeconds(this.len, m.key) });
+    this.emit({ kind: 'header', mode: m.key, version: this.version, len: this.len, flags: this.flags, seconds: frameSeconds(this.len, m.key) });
     this.state = 'pay';
   }
   _data(ev) {
@@ -292,7 +293,7 @@ class Demod {
         const pay = body.slice(0, this.len), c = crc32(pay);
         const ok = ((body[this.len] << 24) | (body[this.len + 1] << 16) | (body[this.len + 2] << 8) | body[this.len + 3]) >>> 0 === c;
         let q = 0; for (const v of this.soft) q += Math.abs(v); q /= this.soft.length;
-        this.emit({ kind: 'frame', ok, why: ok ? '' : 'crc', mode: m.key, flags: this.flags, bytes: ok ? pay : null, quality: q });
+        this.emit({ kind: 'frame', ok, why: ok ? '' : 'crc', mode: m.key, version: this.version, flags: this.flags, bytes: ok ? pay : null, quality: q });
         this._reset('done');
       }
     }
